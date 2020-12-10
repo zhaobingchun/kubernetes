@@ -32,7 +32,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
-	e2epv "k8s.io/kubernetes/test/e2e/framework/pv"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	e2evolume "k8s.io/kubernetes/test/e2e/framework/volume"
 	"k8s.io/kubernetes/test/e2e/storage/testpatterns"
@@ -68,6 +67,8 @@ func InitVolumeExpandTestSuite() TestSuite {
 				testpatterns.BlockVolModeDynamicPV,
 				testpatterns.DefaultFsDynamicPVAllowExpansion,
 				testpatterns.BlockVolModeDynamicPVAllowExpansion,
+				testpatterns.NtfsDynamicPV,
+				testpatterns.NtfsDynamicPVAllowExpansion,
 			},
 			SupportedSizeRange: e2evolume.SizeRange{
 				Min: "1Gi",
@@ -110,7 +111,7 @@ func (v *volumeExpandTestSuite) DefineTests(driver TestDriver, pattern testpatte
 	// registers its own BeforeEach which creates the namespace. Beware that it
 	// also registers an AfterEach which renders f unusable. Any code using
 	// f must run inside an It or Context callback.
-	f := framework.NewDefaultFramework("volume-expand")
+	f := framework.NewFrameworkWithCustomTimeouts("volume-expand", getDriverTimeouts(driver))
 
 	init := func() {
 		l = local{}
@@ -155,7 +156,9 @@ func (v *volumeExpandTestSuite) DefineTests(driver TestDriver, pattern testpatte
 			defer cleanup()
 
 			var err error
-			gomega.Expect(l.resource.Sc.AllowVolumeExpansion).To(gomega.BeNil())
+			gomega.Expect(l.resource.Sc.AllowVolumeExpansion).NotTo(gomega.BeNil())
+			allowVolumeExpansion := *l.resource.Sc.AllowVolumeExpansion
+			gomega.Expect(allowVolumeExpansion).To(gomega.BeFalse())
 			ginkgo.By("Expanding non-expandable pvc")
 			currentPvcSize := l.resource.Pvc.Spec.Resources.Requests[v1.ResourceStorage]
 			newSize := currentPvcSize.DeepCopy()
@@ -174,10 +177,11 @@ func (v *volumeExpandTestSuite) DefineTests(driver TestDriver, pattern testpatte
 			podConfig := e2epod.Config{
 				NS:            f.Namespace.Name,
 				PVCs:          []*v1.PersistentVolumeClaim{l.resource.Pvc},
-				SeLinuxLabel:  e2epv.SELinuxLabel,
+				SeLinuxLabel:  e2evolume.GetLinuxLabel(),
 				NodeSelection: l.config.ClientNodeSelection,
+				ImageID:       e2evolume.GetDefaultTestImageID(),
 			}
-			l.pod, err = e2epod.CreateSecPodWithNodeSelection(f.ClientSet, &podConfig, framework.PodStartTimeout)
+			l.pod, err = e2epod.CreateSecPodWithNodeSelection(f.ClientSet, &podConfig, f.Timeouts.PodStart)
 			defer func() {
 				err = e2epod.DeletePodWithWait(f.ClientSet, l.pod)
 				framework.ExpectNoError(err, "while cleaning up pod already deleted in resize test")
@@ -217,8 +221,9 @@ func (v *volumeExpandTestSuite) DefineTests(driver TestDriver, pattern testpatte
 			podConfig = e2epod.Config{
 				NS:            f.Namespace.Name,
 				PVCs:          []*v1.PersistentVolumeClaim{l.resource.Pvc},
-				SeLinuxLabel:  e2epv.SELinuxLabel,
+				SeLinuxLabel:  e2evolume.GetLinuxLabel(),
 				NodeSelection: l.config.ClientNodeSelection,
+				ImageID:       e2evolume.GetDefaultTestImageID(),
 			}
 			l.pod2, err = e2epod.CreateSecPodWithNodeSelection(f.ClientSet, &podConfig, resizedPodStartupTimeout)
 			defer func() {
@@ -244,10 +249,11 @@ func (v *volumeExpandTestSuite) DefineTests(driver TestDriver, pattern testpatte
 			podConfig := e2epod.Config{
 				NS:            f.Namespace.Name,
 				PVCs:          []*v1.PersistentVolumeClaim{l.resource.Pvc},
-				SeLinuxLabel:  e2epv.SELinuxLabel,
+				SeLinuxLabel:  e2evolume.GetLinuxLabel(),
 				NodeSelection: l.config.ClientNodeSelection,
+				ImageID:       e2evolume.GetDefaultTestImageID(),
 			}
-			l.pod, err = e2epod.CreateSecPodWithNodeSelection(f.ClientSet, &podConfig, framework.PodStartTimeout)
+			l.pod, err = e2epod.CreateSecPodWithNodeSelection(f.ClientSet, &podConfig, f.Timeouts.PodStart)
 			defer func() {
 				err = e2epod.DeletePodWithWait(f.ClientSet, l.pod)
 				framework.ExpectNoError(err, "while cleaning up pod already deleted in resize test")

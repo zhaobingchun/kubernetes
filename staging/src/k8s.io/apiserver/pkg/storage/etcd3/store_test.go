@@ -47,6 +47,7 @@ import (
 	examplev1 "k8s.io/apiserver/pkg/apis/example/v1"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
 	"k8s.io/apiserver/pkg/storage/value"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -204,7 +205,7 @@ func TestGet(t *testing.T) {
 		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
 			ttl := uint64(1)
 			return updateObj, &ttl, nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
@@ -592,7 +593,7 @@ func TestGuaranteedUpdate(t *testing.T) {
 				}
 				pod.Name = name
 				return &pod, nil
-			}))
+			}), nil)
 		store.transformer = originalTransformer
 
 		if tt.expectNotFoundErr {
@@ -645,7 +646,7 @@ func TestGuaranteedUpdateWithTTL(t *testing.T) {
 		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
 			ttl := uint64(1)
 			return input, &ttl, nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -742,7 +743,7 @@ func TestGuaranteedUpdateWithConflict(t *testing.T) {
 				pod.Name = "foo-1"
 				secondToEnter.Wait()
 				return pod, nil
-			}))
+			}), nil)
 		firstToFinish.Done()
 		errChan <- err
 	}()
@@ -758,7 +759,7 @@ func TestGuaranteedUpdateWithConflict(t *testing.T) {
 			pod := obj.(*example.Pod)
 			pod.Name = "foo-2"
 			return pod, nil
-		}))
+		}), nil)
 	if err != nil {
 		t.Fatalf("Second GuaranteedUpdate error %#v", err)
 	}
@@ -784,6 +785,7 @@ func TestGuaranteedUpdateWithSuggestionAndConflict(t *testing.T) {
 			pod.Name = "foo-2"
 			return pod, nil
 		}),
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -822,7 +824,7 @@ func TestTransformationFailure(t *testing.T) {
 	codec := apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
-	store := newStore(cluster.RandClient(), newPod, false, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
+	store := newStore(cluster.RandClient(), newPod, false, storagebackend.DefaultLeaseReuseDurationSeconds, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
 	ctx := context.Background()
 
 	preset := []struct {
@@ -875,7 +877,7 @@ func TestTransformationFailure(t *testing.T) {
 	// GuaranteedUpdate without suggestion should return an error
 	if err := store.GuaranteedUpdate(ctx, preset[1].key, &example.Pod{}, false, nil, func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
 		return input, nil, nil
-	}); !storage.IsInternalError(err) {
+	}, nil); !storage.IsInternalError(err) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 	// GuaranteedUpdate with suggestion should return an error if we don't change the object
@@ -899,8 +901,8 @@ func TestList(t *testing.T) {
 	codec := apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
-	store := newStore(cluster.RandClient(), newPod, true, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
-	disablePagingStore := newStore(cluster.RandClient(), newPod, false, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
+	store := newStore(cluster.RandClient(), newPod, true, storagebackend.DefaultLeaseReuseDurationSeconds, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
+	disablePagingStore := newStore(cluster.RandClient(), newPod, false, storagebackend.DefaultLeaseReuseDurationSeconds, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
 	ctx := context.Background()
 
 	// Setup storage with the following structure:
@@ -1398,7 +1400,7 @@ func TestListContinuation(t *testing.T) {
 	etcdClient := cluster.RandClient()
 	recorder := &clientRecorder{KV: etcdClient.KV}
 	etcdClient.KV = recorder
-	store := newStore(etcdClient, newPod, true, codec, "", transformer)
+	store := newStore(etcdClient, newPod, true, storagebackend.DefaultLeaseReuseDurationSeconds, codec, "", transformer)
 	ctx := context.Background()
 
 	// Setup storage with the following structure:
@@ -1560,7 +1562,7 @@ func TestListContinuationWithFilter(t *testing.T) {
 	etcdClient := cluster.RandClient()
 	recorder := &clientRecorder{KV: etcdClient.KV}
 	etcdClient.KV = recorder
-	store := newStore(etcdClient, newPod, true, codec, "", transformer)
+	store := newStore(etcdClient, newPod, true, storagebackend.DefaultLeaseReuseDurationSeconds, codec, "", transformer)
 	ctx := context.Background()
 
 	preset := []struct {
@@ -1663,7 +1665,7 @@ func TestListInconsistentContinuation(t *testing.T) {
 	codec := apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
-	store := newStore(cluster.RandClient(), newPod, true, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
+	store := newStore(cluster.RandClient(), newPod, true, storagebackend.DefaultLeaseReuseDurationSeconds, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
 	ctx := context.Background()
 
 	// Setup storage with the following structure:
@@ -1808,12 +1810,11 @@ func TestListInconsistentContinuation(t *testing.T) {
 func testSetup(t *testing.T) (context.Context, *store, *integration.ClusterV3) {
 	codec := apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	store := newStore(cluster.RandClient(), newPod, true, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
-	ctx := context.Background()
 	// As 30s is the default timeout for testing in glboal configuration,
 	// we cannot wait longer than that in a single time: change it to 10
 	// for testing purposes. See apimachinery/pkg/util/wait/wait.go
-	store.leaseManager.setLeaseReuseDurationSeconds(1)
+	store := newStore(cluster.RandClient(), newPod, true, 1, codec, "", &prefixTransformer{prefix: []byte(defaultTestPrefix)})
+	ctx := context.Background()
 	return ctx, store, cluster
 }
 
@@ -1854,7 +1855,7 @@ func TestPrefix(t *testing.T) {
 		"/registry":         "/registry",
 	}
 	for configuredPrefix, effectivePrefix := range testcases {
-		store := newStore(cluster.RandClient(), nil, true, codec, configuredPrefix, transformer)
+		store := newStore(cluster.RandClient(), nil, true, storagebackend.DefaultLeaseReuseDurationSeconds, codec, configuredPrefix, transformer)
 		if store.pathPrefix != effectivePrefix {
 			t.Errorf("configured prefix of %s, expected effective prefix of %s, got %s", configuredPrefix, effectivePrefix, store.pathPrefix)
 		}
@@ -2021,7 +2022,7 @@ func TestConsistentList(t *testing.T) {
 	transformer := &fancyTransformer{
 		transformer: &prefixTransformer{prefix: []byte(defaultTestPrefix)},
 	}
-	store := newStore(cluster.RandClient(), newPod, true, codec, "", transformer)
+	store := newStore(cluster.RandClient(), newPod, true, storagebackend.DefaultLeaseReuseDurationSeconds, codec, "", transformer)
 	transformer.store = store
 
 	for i := 0; i < 5; i++ {

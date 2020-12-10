@@ -83,11 +83,11 @@ type objState struct {
 }
 
 // New returns an etcd3 implementation of storage.Interface.
-func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, transformer value.Transformer, pagingEnabled bool) storage.Interface {
-	return newStore(c, newFunc, pagingEnabled, codec, prefix, transformer)
+func New(c *clientv3.Client, codec runtime.Codec, newFunc func() runtime.Object, prefix string, transformer value.Transformer, pagingEnabled bool, leaseReuseDurationSeconds int64) storage.Interface {
+	return newStore(c, newFunc, pagingEnabled, leaseReuseDurationSeconds, codec, prefix, transformer)
 }
 
-func newStore(c *clientv3.Client, newFunc func() runtime.Object, pagingEnabled bool, codec runtime.Codec, prefix string, transformer value.Transformer) *store {
+func newStore(c *clientv3.Client, newFunc func() runtime.Object, pagingEnabled bool, leaseReuseDurationSeconds int64, codec runtime.Codec, prefix string, transformer value.Transformer) *store {
 	versioner := APIObjectVersioner{}
 	result := &store{
 		client:        c,
@@ -100,7 +100,7 @@ func newStore(c *clientv3.Client, newFunc func() runtime.Object, pagingEnabled b
 		// keeps compatibility with etcd2 impl for custom prefixes that don't start with '/'
 		pathPrefix:   path.Join("/", prefix),
 		watcher:      newWatcher(c, codec, newFunc, versioner, transformer),
-		leaseManager: newDefaultLeaseManager(c),
+		leaseManager: newDefaultLeaseManager(c, leaseReuseDurationSeconds),
 	}
 	return result
 }
@@ -238,7 +238,7 @@ func (s *store) conditionalDelete(ctx context.Context, key string, out runtime.O
 // GuaranteedUpdate implements storage.Interface.GuaranteedUpdate.
 func (s *store) GuaranteedUpdate(
 	ctx context.Context, key string, out runtime.Object, ignoreNotFound bool,
-	preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, suggestion ...runtime.Object) error {
+	preconditions *storage.Preconditions, tryUpdate storage.UpdateFunc, suggestion runtime.Object) error {
 	trace := utiltrace.New("GuaranteedUpdate etcd3", utiltrace.Field{"type", getTypeName(out)})
 	defer trace.LogIfLong(500 * time.Millisecond)
 
@@ -260,8 +260,8 @@ func (s *store) GuaranteedUpdate(
 
 	var origState *objState
 	var mustCheckData bool
-	if len(suggestion) == 1 && suggestion[0] != nil {
-		origState, err = s.getStateFromObject(suggestion[0])
+	if suggestion != nil {
+		origState, err = s.getStateFromObject(suggestion)
 		if err != nil {
 			return err
 		}

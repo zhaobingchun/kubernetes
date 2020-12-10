@@ -292,7 +292,7 @@ func (p *criStatsProvider) ListPodCPUAndMemoryStats() ([]statsapi.PodStats, erro
 		if !caFound {
 			klog.V(4).Infof("Unable to find cadvisor stats for %q", containerID)
 		} else {
-			p.addCadvisorContainerStats(cs, &caStats)
+			p.addCadvisorContainerCPUAndMemoryStats(cs, &caStats)
 		}
 		ps.Containers = append(ps.Containers, *cs)
 	}
@@ -464,7 +464,7 @@ func (p *criStatsProvider) addPodCPUMemoryStats(
 			ps.CPU = &statsapi.CPUStats{}
 		}
 
-		ps.CPU.Time = cs.StartTime
+		ps.CPU.Time = cs.CPU.Time
 		usageCoreNanoSeconds := getUint64Value(cs.CPU.UsageCoreNanoSeconds) + getUint64Value(ps.CPU.UsageCoreNanoSeconds)
 		usageNanoCores := getUint64Value(cs.CPU.UsageNanoCores) + getUint64Value(ps.CPU.UsageNanoCores)
 		ps.CPU.UsageCoreNanoSeconds = &usageCoreNanoSeconds
@@ -778,6 +778,25 @@ func removeTerminatedContainers(containers []*runtimeapi.Container) []*runtimeap
 }
 
 func (p *criStatsProvider) addCadvisorContainerStats(
+	cs *statsapi.ContainerStats,
+	caPodStats *cadvisorapiv2.ContainerInfo,
+) {
+	if caPodStats.Spec.HasCustomMetrics {
+		cs.UserDefinedMetrics = cadvisorInfoToUserDefinedMetrics(caPodStats)
+	}
+
+	cpu, memory := cadvisorInfoToCPUandMemoryStats(caPodStats)
+	if cpu != nil {
+		cs.CPU = cpu
+	}
+	if memory != nil {
+		cs.Memory = memory
+	}
+	accelerators := cadvisorInfoToAcceleratorStats(caPodStats)
+	cs.Accelerators = accelerators
+}
+
+func (p *criStatsProvider) addCadvisorContainerCPUAndMemoryStats(
 	cs *statsapi.ContainerStats,
 	caPodStats *cadvisorapiv2.ContainerInfo,
 ) {

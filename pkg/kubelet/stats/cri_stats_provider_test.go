@@ -79,6 +79,7 @@ const (
 	cName6 = "container6-name"
 	cName7 = "container7-name"
 	cName8 = "container8-name"
+	cName9 = "container9-name"
 )
 
 func TestCRIListPodStats(t *testing.T) {
@@ -259,11 +260,14 @@ func TestCRIListPodStats(t *testing.T) {
 	c0 := containerStatsMap[cName0]
 	assert.Equal(container0.CreatedAt, c0.StartTime.UnixNano())
 	checkCRICPUAndMemoryStats(assert, c0, infos[container0.ContainerStatus.Id].Stats[0])
+	checkCRIAcceleratorStats(assert, c0, infos[container0.ContainerStatus.Id].Stats[0])
 	checkCRIRootfsStats(assert, c0, containerStats0, &imageFsInfo)
 	checkCRILogsStats(assert, c0, &rootFsInfo, containerLogStats0)
+
 	c1 := containerStatsMap[cName1]
 	assert.Equal(container1.CreatedAt, c1.StartTime.UnixNano())
 	checkCRICPUAndMemoryStats(assert, c1, infos[container1.ContainerStatus.Id].Stats[0])
+	checkCRIAcceleratorStats(assert, c1, infos[container1.ContainerStatus.Id].Stats[0])
 	checkCRIRootfsStats(assert, c1, containerStats1, nil)
 	checkCRILogsStats(assert, c1, &rootFsInfo, containerLogStats1)
 	checkCRINetworkStats(assert, p0.Network, infos[sandbox0.PodSandboxStatus.Id].Stats[0].Network)
@@ -279,6 +283,7 @@ func TestCRIListPodStats(t *testing.T) {
 	assert.Equal(cName2, c2.Name)
 	assert.Equal(container2.CreatedAt, c2.StartTime.UnixNano())
 	checkCRICPUAndMemoryStats(assert, c2, infos[container2.ContainerStatus.Id].Stats[0])
+	checkCRIAcceleratorStats(assert, c2, infos[container2.ContainerStatus.Id].Stats[0])
 	checkCRIRootfsStats(assert, c2, containerStats2, &imageFsInfo)
 	checkCRILogsStats(assert, c2, &rootFsInfo, containerLogStats2)
 	checkCRINetworkStats(assert, p1.Network, infos[sandbox1.PodSandboxStatus.Id].Stats[0].Network)
@@ -295,6 +300,7 @@ func TestCRIListPodStats(t *testing.T) {
 	assert.Equal(cName3, c3.Name)
 	assert.Equal(container4.CreatedAt, c3.StartTime.UnixNano())
 	checkCRICPUAndMemoryStats(assert, c3, infos[container4.ContainerStatus.Id].Stats[0])
+	checkCRIAcceleratorStats(assert, c3, infos[container4.ContainerStatus.Id].Stats[0])
 	checkCRIRootfsStats(assert, c3, containerStats4, &imageFsInfo)
 
 	checkCRILogsStats(assert, c3, &rootFsInfo, containerLogStats4)
@@ -357,6 +363,11 @@ func TestCRIListPodCPUAndMemoryStats(t *testing.T) {
 		sandbox5        = makeFakePodSandbox("sandbox1-name", "sandbox5-uid", "sandbox1-ns", true)
 		container7      = makeFakeContainer(sandbox5, cName7, 0, true)
 		containerStats7 = makeFakeContainerStats(container7, imageFsMountpoint)
+
+		// A pod that cadvisor returns no stats
+		sandbox6        = makeFakePodSandbox("sandbox6-name", "sandbox6-uid", "sandbox6-ns", false)
+		container9      = makeFakeContainer(sandbox6, cName9, 0, false)
+		containerStats9 = makeFakeContainerStats(container9, imageFsMountpoint)
 	)
 
 	var (
@@ -393,13 +404,13 @@ func TestCRIListPodCPUAndMemoryStats(t *testing.T) {
 	mockCadvisor.
 		On("ContainerInfoV2", "/", options).Return(infos, nil)
 	fakeRuntimeService.SetFakeSandboxes([]*critest.FakePodSandbox{
-		sandbox0, sandbox1, sandbox2, sandbox3, sandbox4, sandbox5,
+		sandbox0, sandbox1, sandbox2, sandbox3, sandbox4, sandbox5, sandbox6,
 	})
 	fakeRuntimeService.SetFakeContainers([]*critest.FakeContainer{
-		container0, container1, container2, container3, container4, container5, container6, container7, container8,
+		container0, container1, container2, container3, container4, container5, container6, container7, container8, container9,
 	})
 	fakeRuntimeService.SetFakeContainerStats([]*runtimeapi.ContainerStats{
-		containerStats0, containerStats1, containerStats2, containerStats3, containerStats4, containerStats5, containerStats6, containerStats7, containerStats8,
+		containerStats0, containerStats1, containerStats2, containerStats3, containerStats4, containerStats5, containerStats6, containerStats7, containerStats8, containerStats9,
 	})
 
 	ephemeralVolumes := makeFakeVolumeStats([]string{"ephVolume1, ephVolumes2"})
@@ -423,7 +434,7 @@ func TestCRIListPodCPUAndMemoryStats(t *testing.T) {
 	stats, err := provider.ListPodCPUAndMemoryStats()
 	assert := assert.New(t)
 	assert.NoError(err)
-	assert.Equal(4, len(stats))
+	assert.Equal(5, len(stats))
 
 	podStatsMap := make(map[statsapi.PodReference]statsapi.PodStats)
 	for _, s := range stats {
@@ -502,6 +513,18 @@ func TestCRIListPodCPUAndMemoryStats(t *testing.T) {
 	assert.NotNil(c8.CPU.Time)
 	assert.NotNil(c8.Memory.Time)
 	checkCRIPodCPUAndMemoryStats(assert, p3, infos[sandbox3Cgroup].Stats[0])
+
+	p6 := podStatsMap[statsapi.PodReference{Name: "sandbox6-name", UID: "sandbox6-uid", Namespace: "sandbox6-ns"}]
+	assert.Equal(sandbox6.CreatedAt, p6.StartTime.UnixNano())
+	assert.Equal(1, len(p6.Containers))
+
+	c9 := p6.Containers[0]
+	assert.Equal(cName9, c9.Name)
+	assert.Equal(container9.CreatedAt, c9.StartTime.UnixNano())
+	assert.NotNil(c9.CPU.Time)
+	assert.Equal(containerStats9.Cpu.Timestamp, p6.CPU.Time.UnixNano())
+	assert.NotNil(c9.Memory.Time)
+	assert.Equal(containerStats9.Memory.Timestamp, p6.Memory.Time.UnixNano())
 
 	mockCadvisor.AssertExpectations(t)
 }
@@ -672,6 +695,18 @@ func checkCRICPUAndMemoryStats(assert *assert.Assertions, actual statsapi.Contai
 	assert.Equal(cs.Memory.RSS, *actual.Memory.RSSBytes)
 	assert.Equal(cs.Memory.ContainerData.Pgfault, *actual.Memory.PageFaults)
 	assert.Equal(cs.Memory.ContainerData.Pgmajfault, *actual.Memory.MajorPageFaults)
+}
+
+func checkCRIAcceleratorStats(assert *assert.Assertions, actual statsapi.ContainerStats, cs *cadvisorapiv2.ContainerStats) {
+	assert.Equal(len(cs.Accelerators), len(actual.Accelerators))
+	for i := range cs.Accelerators {
+		assert.Equal(cs.Accelerators[i].Make, actual.Accelerators[i].Make)
+		assert.Equal(cs.Accelerators[i].Model, actual.Accelerators[i].Model)
+		assert.Equal(cs.Accelerators[i].ID, actual.Accelerators[i].ID)
+		assert.Equal(cs.Accelerators[i].MemoryTotal, actual.Accelerators[i].MemoryTotal)
+		assert.Equal(cs.Accelerators[i].MemoryUsed, actual.Accelerators[i].MemoryUsed)
+		assert.Equal(cs.Accelerators[i].DutyCycle, actual.Accelerators[i].DutyCycle)
+	}
 }
 
 func checkCRIRootfsStats(assert *assert.Assertions, actual statsapi.ContainerStats, cs *runtimeapi.ContainerStats, imageFsInfo *cadvisorapiv2.FsInfo) {
